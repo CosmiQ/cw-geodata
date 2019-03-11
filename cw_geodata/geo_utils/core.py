@@ -6,6 +6,7 @@ import rasterio
 from rasterio.enums import Resampling
 import ogr
 import shapely
+from shapely.ops import cascaded_union
 import pyproj
 from warnings import warn
 
@@ -277,3 +278,45 @@ def list_to_affine(xform_mat):
         return Affine.from_gdal(*xform_mat)
     else:
         return Affine(*xform_mat)
+
+
+def geometries_internal_intersection(polygons):
+    """Get the intersection geometries between all geometries in a set.
+
+    Arguments
+    ---------
+    polygons : `list`-like
+        A `list`-like containing geometries. These will be placed in a
+        :class:`geopandas.GeoSeries` object to take advantage of `rtree`
+        spatial indexing.
+
+    Returns
+    -------
+    intersect_list
+        A `list` of geometric intersections between polygons in `polygons`, in
+        the same CRS as the input.
+    """
+    # convert `polygons` to geoseries and get spatialindex
+    if isinstance(polygons, gpd.GeoSeries):
+        gs = polygons
+    else:
+        gs = gpd.GeoSeries(polygons).reset_index()
+    sindex = gs.sindex()
+
+    # find indices of polygons that overlap in gs
+    intersect_lists = gs.apply(lambda x: sindex.intersection(x))
+
+    # get rid of self-intersects
+    intersect_lists = intersect_lists.apply(
+        lambda x: [i for i in x if i != x.index])
+
+    # get rid of rows with no overlaps
+    len_intersects = intersect_lists.apply(len)
+    intersect_lists = intersect_lists[len_intersects > 0]
+    output_polys = []
+
+    for idx in intersect_lists.index:
+        for intersector_idx in intersect_lists[idx]:
+            output_polys.append(gs[idx].intersection(gs[intersector_idx]))
+
+    return cascaded_union(output_polys)
