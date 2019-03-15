@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 version = '0.0.1'
 
 # Runtime requirements.
-inst_reqs = ["shapely", "rtree", "geopandas", "pandas"]
+inst_reqs = ["shapely", "rtree", "geopandas", "pandas", "networkx", "osmnx"]
 
 extra_reqs = {
     'test': ['mock', 'pytest', 'pytest-cov', 'codecov']}
