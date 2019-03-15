@@ -3,7 +3,6 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-dependencies:
   - python=3.6
   - pip
   - shapely
