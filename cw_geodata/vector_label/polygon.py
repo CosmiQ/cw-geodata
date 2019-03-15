@@ -15,9 +15,9 @@ def convert_poly_coords(geom, raster_src=None, affine_obj=None, inverse=False):
 
     Arguments
     ---------
-    geom : :class:`shapely.Geometry` or str
-        A :class:`shapely.Geometry`, or WKT string-formatted geometry object
-        currently in pixel coordinates.
+    geom : :class:`shapely.geometry.shape` or str
+        A :class:`shapely.geometry.shape`, or WKT string-formatted geometry
+        object currently in pixel coordinates.
     raster_src : str, optional
         Path to a raster image with georeferencing data to apply to `geom`.
         Alternatively, an opened :class:`rasterio.Band` object or
@@ -92,6 +92,9 @@ def affine_transform_gdf(gdf, affine_obj, inverse=False, geom_col="geometry"):
         ``[a, b, d, e, xoff, yoff]`` list or an :class:`affine.Affine` object.
     inverse : bool, optional
         Use this argument to perform the inverse transformation.
+    geom_col : str, optional
+        The column in `gdf` corresponding to the geometry. Defaults to
+        ``'geometry'``.
     """
     if isinstance(gdf, str):  # assume it's a geojson
         if gdf.lower().endswith('json'):

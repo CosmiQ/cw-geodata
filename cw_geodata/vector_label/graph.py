@@ -22,26 +22,26 @@ def geojson_to_graph(vector_file, graph_name=None, retain_all=True,
         Path to a geojson file (or any other OGR-compatible vector file) to
         load network edges and nodes from.
     graph_name : str, optional
-        Name of the graph. If not provided, graph will be called ``'unnamed'``.
+        Name of the graph. If not provided, graph will be named ``'unnamed'`` .
     retain_all : bool, optional
-        If ``True``, the entire graph will be returned even if some parts are
+        If ``True`` , the entire graph will be returned even if some parts are
         not connected. Defaults to ``True``.
-    valid_road_types : `list` of `int`s, optional
-        The road types to permit in the graph. The possible values are integers
-        1-7, which map as follows:
-        ``
-        1: Motorway
-        2: Primary
-        3: Secondary
-        4: Tertiary
-        5: Residential
-        6: Unclassified
-        7: Cart track
-        ``
-        If not provided, it's assumed that all road types are permitted.
+    valid_road_types : :class:`list` of :class:`int` s, optional
+        The road types to permit in the graph. If not provided, it's assumed
+        that all road types are permitted. The possible values are integers
+        ``1``-``7``, which map as follows::
+
+            1: Motorway
+            2: Primary
+            3: Secondary
+            4: Tertiary
+            5: Residential
+            6: Unclassified
+            7: Cart track
+
     road_type_field : str, optional
         The name of the property in the vector data that delineates road type.
-        Defaults to ``'type'``.
+        Defaults to ``'type'`` .
     first_path_idx : int, optional
         The first index to use for a path. This can be set to a higher value
         so that a graph's path indices don't overlap with existing values in
@@ -51,12 +51,20 @@ def geojson_to_graph(vector_file, graph_name=None, retain_all=True,
         so that a graph's node indices don't overlap with existing values in
         another graph.
     verbose : bool, optional
-        Verbose print output. Defaults to ``False``.
-    ..deprecated:: 0.0.1
+        Verbose print output. Defaults to ``False`` .
+
+    ..deprecated:: 0.1.1
         The `network_type` argument no longer has any effect in
         :func:`osmnx.core.add_paths` and is now ignored.
 
-        """
+    Returns
+    -------
+    G : :class:`networkx.MultiGraph`
+        A :class:`networkx.MultiGraph` containing all of the nodes and edges
+        from the geojson (or only the largest connected component if
+        `retain_all` = ``False``). Edge lengths are weighted based on
+        geographic distance.
+    """
     log('Creating networkx graph...')
     start_time = time.time()
     # create the graph as a MultiGraph and set the original CRS to EPSG 4326
@@ -118,23 +126,23 @@ def get_nodes_paths(vector_file, first_path_idx=0, first_node_idx=0,
         The first index to use for a node. This can be set to a higher value
         so that a graph's node indices don't overlap with existing values in
         another graph.
-    node_gdf : :class:`geopandas.GeoDataFrame`, optional
+    node_gdf : :class:`geopandas.GeoDataFrame` , optional
         A :class:`geopandas.GeoDataFrame` containing nodes to add to the graph.
         New nodes will be added to this object incrementally during the
         function call.
-    valid_road_types : `list` of `int`s, optional
-        The road types to permit in the graph. The possible values are integers
-        1-7, which map as follows:
-        ``
-        1: Motorway
-        2: Primary
-        3: Secondary
-        4: Tertiary
-        5: Residential
-        6: Unclassified
-        7: Cart track
-        ``
-        If not provided, it's assumed that all road types are permitted.
+    valid_road_types : :class:`list` of :class:`int` s, optional
+        The road types to permit in the graph. If not provided, it's assumed
+        that all road types are permitted. The possible values are integers
+        ``1``-``7``, which map as follows::
+
+            1: Motorway
+            2: Primary
+            3: Secondary
+            4: Tertiary
+            5: Residential
+            6: Unclassified
+            7: Cart track
+
     road_type_field : str, optional
         The name of the attribute containing road type information in
         `vector_file`. Defaults to ``'type'``.
@@ -143,16 +151,17 @@ def get_nodes_paths(vector_file, first_path_idx=0, first_node_idx=0,
 
     Returns
     -------
-    nodes, paths : `tuple` of `dict`s
+    nodes, paths : `tuple` of `dict` s
         nodes : dict
             A `dict` of ``node_idx: node_parameters`` pairs containing relevant
             data for the node, i.e. geographic location and any metadata
-            contained in ``node['properties']``.
+            contained in ``node['properties']`` .
         paths : dict
             A `dict` of ``path_idx: path_parameters`` pairs.
-            ``path_parameters`` is a `dict` containing the `node_idx`s for each
-            node along `path`, along with any metadata contained in
-            ``properties`` (this is the same as ``node[properties]``).
+            ``path_parameters`` is a `dict` containing the `node_idx` s for
+            each node along `path`, along with any metadata contained in
+            ``properties`` (this is the same as ``node[properties]`` ).
+
     """
     path_idx = first_path_idx
     node_idx = first_node_idx
@@ -232,12 +241,12 @@ def process_linestring(linestring, path_idx, node_idx,
         edges from.
     path_idx : int
         The index to assign the path for adding to the graph outside of this
-        function. Assigned to ``path['osmid']``, which is the ID attribute
+        function. Assigned to ``path['osmid']`` , which is the ID attribute
         for the path `dict`.
     node_idx : int
         The index to assign the first node in the path. Assigned to
-        ``node['osmid']``, which is the ID attribute for the node `dict`. Will
-        be incremented for each node in the path.
+        ``node['osmid']`` , which is the ID attribute for the node `dict` .
+        Will be incremented for each node in the path.
     node_gdf : :class:`geopandas.GeoDataFrame`, optional
         A :class:`geopandas.GeoDataFrame` of existing nodes already in a graph
         so that nodes at the same location aren't duplicated. The `node_idx`
@@ -247,29 +256,31 @@ def process_linestring(linestring, path_idx, node_idx,
     properties : dict, optional
         A dictionary of properties for the linestring being processed. Loaded
         from the path's ``properties`` attribute from a geographic vector data
-        source. Defaults to an empty `dict`.
+        source. Defaults to an empty `dict` .
     road_type_field : str, optional
         The attribute containing road type information in `properties`.
-        Defaults to ``'type'``.
+        Defaults to ``'type'`` .
 
     Returns
     -------
     path, nodes, node_idx, node_gdf : tuple
         path : dict
             A dictionary with the following keys:
-            - ``'osmid'``: the ``path_idx``
-            - ``'nodes'``: a list of ``node_idx``s for nodes on the path
-            - ``'highway'``: the road type (defined by
-              ``properties[road_type_field]``).
+
+            * ``'osmid'`` : the ``path_idx``
+            * ``'nodes'`` : a list of ``node_idx`` s for nodes on the path
+            * ``'highway'`` : the road type (defined by
+              ``properties[road_type_field]`` ).
+
         nodes : dict
             A dictionary whose ``key, value`` pairs correspond to
-            ``node_idx, node_data``. Node data is a `dict` of:
-            - ``'x'`` : x position of the node in the input CRS
-            - ``'y'`` : y position of the node in the input CRS
-            - ``'osmid'`` : ``node_idx``
+            ``node_idx, node_data`` . Node data is a `dict` of:
+            * ``'x'`` : x position of the node in the input CRS
+            * ``'y'`` : y position of the node in the input CRS
+            * ``'osmid'`` : ``node_idx``
         node_idx : int
             The numeric index of the last node in the path. Passed back so that
-            `node_idx`s can be incremented so they don't overlap between
+            `node_idx` s can be incremented so they don't overlap between
             different paths.
         node_gdf : :class:`geopandas.GeoDataFrame`
             A :class:`geopandas.GeoDataFrame` containing all nodes already

@@ -12,6 +12,8 @@ dependencies:
   - scipy
   - scikit-image
   - rtree
+  - networkx
   - rasterio
   - pip:
     - affine
+    - osmnx
