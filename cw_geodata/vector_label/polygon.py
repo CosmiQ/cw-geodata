@@ -7,7 +7,6 @@ from ..raster_image.image import get_geo_transform
 from shapely.geometry import box, Polygon
 import pandas as pd
 import geopandas as gpd
-from rtree.core import RTreeError
 
 
 def convert_poly_coords(geom, raster_src=None, affine_obj=None, inverse=False):
@@ -302,7 +301,5 @@ def get_overlapping_subset(gdf, im=None, bbox=None, bbox_crs=None):
         bbox = rasterio.warp.transform_bounds(bbox_crs, gdf.crs, *bbox)
     try:
         intersectors = list(sindex.intersection(bbox))
-    except RTreeError:
-        intersectors = []
 
     return gdf.iloc[intersectors, :]
