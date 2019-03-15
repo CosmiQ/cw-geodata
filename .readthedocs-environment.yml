@@ -3,6 +3,7 @@ dependencies:
   - python=3.6
   - pip
   - shapely
+  - fiona
   - pandas
   - geopandas
   - numpy
@@ -12,4 +13,3 @@ dependencies:
   - pip:
     - affine
     - osmnx
-    - osgeo
