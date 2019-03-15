@@ -20,8 +20,8 @@ class CoordTransformer(object):
     Notes
     -----
     This function will take in an image or geometric object (Shapely or GDAL)
-    and transform its coordinate space based on `dest_obj`. `dest_obj`
-    should be an instance of :class:rasterio:`rasterio.`
+    and transform its coordinate space based on `dest_obj` . `dest_obj`
+    should be an instance of :class:`rasterio.DatasetReader` .
 
     Arguments
     ---------
@@ -31,22 +31,22 @@ class CoordTransformer(object):
         if it exists; if it doesn't, it will assume unit (pixel) coords.
     dest_obj
         Object with a destination coordinate reference system to apply to
-        `src_obj`. This can be in the form of an ``[a, b, d, e, xoff, yoff]``
-        `list`, an :class:`affine.Affine` instance, or a source
+        `src_obj` . This can be in the form of an ``[a, b, d, e, xoff, yoff]``
+        `list` , an :class:`affine.Affine` instance, or a source
         :class:`geopandas.GeoDataFrame` or geotiff with `crs` metadata to
         produce the transform from, or even just a crs string.
     src_crs : optional
         Source coordinate reference in the form of a :class:`rasterio.crs.CRS`
         object or an epsg string. Only needed if the source object provided
         does not have CRS metadata attached to it.
-    src_transform : :class:`affine.Affine` or `list`
+    src_transform : :class:`affine.Affine` or :class:`list`
         The source affine transformation matrix as a :class:`affine.Affine`
         object or in an ``[a, b, c, d, xoff, yoff]`` `list`. Required if
-        `src_obj` is a :class:`numpy.array`.
-    dest_transform : :class:`affine.Affine` or `list`
+        `src_obj` is a :class:`numpy.array` .
+    dest_transform : :class:`affine.Affine` or :class:`list`
         The destination affine transformation matrix as a
         :class:`affine.Affine` object or in an ``[a, b, c, d, xoff, yoff]``
-        `list`. Required if `dest_obj` is a :class:`numpy.array`.
+        `list` . Required if `dest_obj` is a :class:`numpy.array` .
     """
     def __init__(self, src_obj=None, dest_obj=None, src_crs=None,
                  src_transform=None, dest_transform=None):
