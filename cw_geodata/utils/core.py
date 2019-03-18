@@ -17,7 +17,7 @@ def _check_rasterio_im_load(im):
 def _check_df_load(df):
     """Check if `df` is already loaded in, if not, load from file."""
     if isinstance(df, str):
-        return pd.read_file(df)
+        return pd.read_csv(df)
     elif isinstance(df, pd.DataFrame):
         return df
     else:
