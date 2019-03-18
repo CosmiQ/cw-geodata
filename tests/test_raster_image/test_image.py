@@ -1,5 +1,5 @@
 import os
-from data import data_dir, sample_load_rasterio, sample_load_gdal
+from cw_geodata.data import data_dir, sample_load_rasterio, sample_load_gdal
 from cw_geodata.raster_image.image import get_geo_transform
 from affine import Affine
 
@@ -22,4 +22,3 @@ class TestGetGeoTransform(object):
         src_obj = sample_load_gdal()
         affine_obj = get_geo_transform(src_obj)
         assert affine_obj == Affine(0.5, 0.0, 733601.0, 0.0, -0.5, 3725139.0)
-        src_obj.close()
