@@ -10,7 +10,7 @@
 <img align="center" src="https://readthedocs.org/projects/cw-geodata/badge/" alt="docs">
 <img align="center" src="https://img.shields.io/github/license/cosmiq/cw-geodata.svg" alt="license">
 <!-- <img align="center" src="https://img.shields.io/docker/build/cosmiqworks/cw-eval.svg" alt="docker"> -->
-<a href="https://codecov.io/gh/CosmiQ/cw-geodata"><img align="center" src="https://codecov.io/gh/CosmiQ/cw-geodata/branch/master/graph/badge.svg" /></a>
+<a href="https://codecov.io/gh/CosmiQ/cw-geodata"><img align="center" src="https://codecov.io/gh/CosmiQ/cw-geodata/branch/dev/graph/badge.svg" /></a>
 </p>
 
 __This package is currently under active development. Check back soon for a mature version.__
