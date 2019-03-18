@@ -3,16 +3,17 @@
 <a href="http://www.cosmiqworks.org"><img src="http://www.cosmiqworks.org/wp-content/uploads/2016/02/cropped-CosmiQ-Works-Logo_R_RGB.png" width="350" alt="CosmiQ Works"></a>
 <br>
 <br>
-__This package is currently under active development. Check back soon for a mature version.__
 <br>
 <!-- <img align="center" src="https://img.shields.io/pypi/v/cw-eval.svg" alt="PyPI"> -->
 <!-- <img align="center" src="https://img.shields.io/conda/vn/conda-forge/cw-eval.svg" alt="conda-forge"> -->
-<img align="center" src="https://travis-ci.com/CosmiQ/cw-geodata.svg?branch=master" alt="build">
-<!-- <img align="center" src="https://readthedocs.org/projects/pip/badge/" alt="docs"> -->
+<img align="center" src="https://travis-ci.com/CosmiQ/cw-geodata.svg?branch=dev" alt="build">
+<img align="center" src="https://readthedocs.org/projects/cw-geodata/badge/" alt="docs">
 <img align="center" src="https://img.shields.io/github/license/cosmiq/cw-geodata.svg" alt="license">
 <!-- <img align="center" src="https://img.shields.io/docker/build/cosmiqworks/cw-eval.svg" alt="docker"> -->
 <a href="https://codecov.io/gh/CosmiQ/cw-geodata"><img align="center" src="https://codecov.io/gh/CosmiQ/cw-geodata/branch/master/graph/badge.svg" /></a>
 </p>
+
+__This package is currently under active development. Check back soon for a mature version.__
 
 - [Installation Instructions](#installation-instructions)
 - [API Documentation](https://cw-eval.readthedocs.io/)
