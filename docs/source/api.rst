@@ -23,9 +23,7 @@ cw-geodata class and function list
   cw_geodata.vector_label.mask.contact_mask
   cw_geodata.vector_label.mask.df_to_px_mask
   cw_geodata.vector_label.mask.footprint_mask
-  cw_geodata.utils.geo.CoordTransformer
   cw_geodata.utils.geo.geometries_internal_intersection
-  cw_geodata.utils.geo.get_crs_from_ogr
   cw_geodata.utils.geo.list_to_affine
   cw_geodata.utils.geo.split_multi_geometries
 
