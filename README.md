@@ -16,7 +16,7 @@
 __This package is currently under active development. Check back soon for a mature version.__
 
 - [Installation Instructions](#installation-instructions)
-- [API Documentation](https://cw-eval.readthedocs.io/)
+- [API Documentation](https://cw-geodata.readthedocs.io/)
 - [Dependencies](#dependencies)
 - [License](#license)
 ---
