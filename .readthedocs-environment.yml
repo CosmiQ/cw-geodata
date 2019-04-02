@@ -1,7 +1,7 @@
 name: cw-geodata
 dependencies:
   - python=3.6
-  - pip
+  - pip=18.1
   - shapely
   - fiona
   - pandas
