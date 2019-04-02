@@ -11,4 +11,4 @@ conda:
   environment: .readthedocs-environment.yml
 
 build:
-  image: latest
+  image: stable
