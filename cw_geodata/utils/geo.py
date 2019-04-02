@@ -8,9 +8,10 @@ import rasterio
 from rasterio.enums import Resampling
 import ogr
 import shapely
+from shapely.errors import WKTReadingError
+from shapely.wkt import loads
 from shapely.geometry import MultiLineString, MultiPolygon, mapping, shape
 from shapely.ops import cascaded_union
-from shapely.wkt import loads
 from warnings import warn
 
 
@@ -69,17 +70,27 @@ def geometries_internal_intersection(polygons):
     # first, filter down to the ones that have _some_ intersection with others
     intersect_lists = intersect_lists[
         intersect_lists.apply(lambda x: len(x) > 1)]
-    # then, drop self-intersects
-    intersect_lists = intersect_lists.reset_index().apply(
-        lambda x: [i for i in x[0] if i != x['index']], axis=1)
-
+    # the below is a royal pain to follow. what it does is create a dataframe
+    # with two columns: 'gs_idx' and 'intersectors'. 'gs_idx' corresponds to
+    # a polygon's original index in gs, and 'intersectors' gives a list of
+    # gs indices for polygons that intersect with its bbox.
+    intersect_lists.name = 'intersectors'
+    intersect_lists.index.name = 'gs_idx'
+    intersect_lists = intersect_lists.reset_index()
+    # first, we get rid  of self-intersection indices in 'intersectors':
+    intersect_lists['intersectors'] = intersect_lists.apply(
+            lambda x: [i for i in x['intersectors'] if i != x['gs_idx']],
+            axis=1)
+    # for each row, we next create a union of the polygons in 'intersectors',
+    # and find the intersection of that with the polygon at gs[gs_idx]. this
+    # (Multi)Polygon output corresponds to all of the intersections for the
+    # polygon at gs[gs_idx]. we add that to a list of intersections stored in
+    # output_polys.
     output_polys = []
-    # create intersection polygons and add them to output_polys
-    _ = intersect_lists.reset_index().apply(lambda x: output_polys.extend(
-        list(gs[x['index']].intersection(gs[i]) for i in x[0])), axis=1)
-
-    # combine these
-
+    _ = intersect_lists.apply(lambda x: output_polys.append(
+        gs[x['gs_idx']].intersection(cascaded_union(gs[x['intersectors']]))
+    ), axis=1)
+    # we then generate the union of all of these intersections and return it.
     return cascaded_union(output_polys)
 
 
@@ -156,6 +167,18 @@ def _reduce_geom_precision(geom, precision=2):
                                       precision)
 
     return shape(geojson)
+
+
+def _check_wkt_load(x):
+    """Check if an object is a loaded polygon or not. If not, load it."""
+    if isinstance(x, str):
+        try:
+            x = loads(x)
+        except WKTReadingError:
+            warn('{} is not a WKT-formatted string.'.format(x))
+
+    return x
+
 
 
 # PRETEND THIS ISN'T HERE AT THE MOMENT

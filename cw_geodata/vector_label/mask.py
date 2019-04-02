@@ -1,9 +1,10 @@
 from ..utils.core import _check_df_load, _check_rasterio_im_load
-from ..utils.geo import geometries_internal_intersection
+from ..utils.geo import geometries_internal_intersection, _check_wkt_load
 import numpy as np
 import pandas as pd
 import rasterio
 from rasterio import features
+from affine import Affine
 from skimage.morphology import square, erosion, dilation
 
 
@@ -68,6 +69,9 @@ def df_to_px_mask(df, channels=['footprint'], out_file=None, reference_im=None,
         provided `channels` `list`.
 
     """
+    if isinstance(channels, str):  # e.g. if "contact", not ["contact"]
+        channels = [channels]
+
     mask_dict = {}
     if 'footprint' in channels:
         mask_dict['footprint'] = footprint_mask(
@@ -77,8 +81,8 @@ def df_to_px_mask(df, channels=['footprint'], out_file=None, reference_im=None,
         )
     if 'boundary' in channels:
         mask_dict['boundary'] = boundary_mask(
-            footprint_mask=mask_dict.get('footprint', None),
-            reference_im=reference_im,
+            footprint_msk=mask_dict.get('footprint', None),
+            reference_im=reference_im, geom_col=geom_col,
             boundary_width=kwargs.get('boundary_width', 3),
             boundary_type=kwargs.get('boundary_type', 'inner'),
             burn_value=burn_value, df=df, affine_obj=affine_obj,
@@ -88,26 +92,29 @@ def df_to_px_mask(df, channels=['footprint'], out_file=None, reference_im=None,
         mask_dict['contact'] = contact_mask(
             df=df, reference_im=reference_im, geom_col=geom_col,
             affine_obj=affine_obj, shape=shape, out_type=out_type,
-            contact_spacing=kwargs.get('contact_spacing', 5),
+            contact_spacing=kwargs.get('contact_spacing', 10),
             burn_value=burn_value
         )
 
     output_arr = np.stack([mask_dict[c] for c in channels], axis=-1)
 
+    if reference_im:
+        reference_im = _check_rasterio_im_load(reference_im)
     if out_file:
         meta = reference_im.meta.copy()
         meta.update(count=output_arr.shape[-1])
         meta.update(dtype='uint8')
         with rasterio.open(out_file, 'w', **meta) as dst:
-            dst.write(output_arr,
-                      indexes=list(range(1, output_arr.shape[-1] + 1)))
+            # I hate band indexing.
+            for c in range(1, 1 + output_arr.shape[-1]):
+                dst.write(output_arr[:, :, c-1], indexes=c)
 
     return output_arr
 
 
 def footprint_mask(df, out_file=None, reference_im=None, geom_col='geometry',
-                   affine_obj=None, shape=(900, 900), out_type='int',
-                   burn_value=255, burn_field=None):
+                   do_transform=False, affine_obj=None, shape=(900, 900),
+                   out_type='int', burn_value=255, burn_field=None):
     """Convert a dataframe of geometries to a pixel mask.
 
     Arguments
@@ -127,11 +134,17 @@ def footprint_mask(df, out_file=None, reference_im=None, geom_col='geometry',
         `affine_obj` and `shape` are ignored.
     geom_col : str, optional
         The column containing geometries in `df`. Defaults to ``"geometry"``.
+    do_transform : bool, optional
+        Should the values in `df` be transformed from geospatial coordinates
+        to pixel coordinates? Defaults to no (False). If True, either
+        `reference_im` or `affine_obj` must be provided as a source for the
+        the required affine transformation matrix.
     affine_obj : `list` or :class:`affine.Affine`, optional
         Affine transformation to use to convert from geo coordinates to pixel
         space. Only provide this argument if `df` is a
         :class:`geopandas.GeoDataFrame` with coordinates in a georeferenced
-        coordinate space. Ignored if `reference_im` is provided.
+        coordinate space. Ignored if `reference_im` is provided or if
+        ``do_transform=False``.
     shape : tuple, optional
         An ``(x_size, y_size)`` tuple defining the pixel extent of the output
         mask. Ignored if `reference_im` is provided.
@@ -152,14 +165,20 @@ def footprint_mask(df, out_file=None, reference_im=None, geom_col='geometry',
 
     """
 
+    # start with required checks and pre-population of values
     if out_file and not reference_im:
         raise ValueError(
             'If saving output to file, `reference_im` must be provided.')
     df = _check_df_load(df)
+    df[geom_col] = df[geom_col].apply(_check_wkt_load)  # load in geoms if wkt
+    if not do_transform:
+        affine_obj = Affine(1, 0, 0, 0, 1, 0)  # identity transform
+
     if reference_im:
         reference_im = _check_rasterio_im_load(reference_im)
         shape = reference_im.shape
-        affine_obj = reference_im.transform
+        if do_transform:
+            affine_obj = reference_im.transform
 
     # extract geometries and pair them with burn values
     if burn_field:
@@ -185,17 +204,25 @@ def footprint_mask(df, out_file=None, reference_im=None, geom_col='geometry',
     return output_arr
 
 
-def boundary_mask(footprint_mask=None, out_file=None, reference_im=None,
+def boundary_mask(footprint_msk=None, out_file=None, reference_im=None,
                   boundary_width=3, boundary_type='inner', burn_value=255,
                   **kwargs):
     """Convert a dataframe of geometries to a pixel mask.
 
+    Notes
+    -----
+    This function requires creation of a footprint mask before it can operate;
+    therefore, if there is no footprint mask already present, it will create
+    one. In that case, additional arguments for :func:`footprint_mask` (e.g.
+    ``df``) must be passed.
+
     Arguments
     ---------
-    footprint_mask : :class:`numpy.array`, optional
+    footprint_msk : :class:`numpy.array`, optional
         A filled in footprint mask created using :func:`footprint_mask`. If not
         provided, one will be made by calling :func:`footprint_mask` before
-        creating the boundary mask, and the required kwargs must be provided.
+        creating the boundary mask, and the required arguments for that
+        function must be provided as kwargs.
     out_file : str, optional
         Path to an image file to save the output to. Must be compatible with
         :class:`rasterio.DatasetReader`. If provided, a `reference_im` must be
@@ -232,19 +259,20 @@ def boundary_mask(footprint_mask=None, out_file=None, reference_im=None,
     if reference_im:
         reference_im = _check_rasterio_im_load(reference_im)
     # need to have a footprint mask for this function, so make it if not given
-    if not footprint_mask:
-        footprint_mask = footprint_mask(reference_im=reference_im,
-                                        burn_value=burn_value, **kwargs)
+    if footprint_msk is None:
+        footprint_msk = footprint_mask(reference_im=reference_im,
+                                       burn_value=burn_value, **kwargs)
 
     # perform dilation or erosion of `footprint_mask` to get the boundary
     strel = square(boundary_width)
     if boundary_type == 'outer':
-        boundary_mask = dilation(footprint_mask, strel)
+        boundary_mask = dilation(footprint_msk, strel)
     elif boundary_type == 'inner':
-        boundary_mask = erosion(footprint_mask, strel)
+        boundary_mask = erosion(footprint_msk, strel)
     # use xor operator between border and footprint mask to get _just_ boundary
-    boundary_mask = boundary_mask ^ footprint_mask
+    boundary_mask = boundary_mask ^ footprint_msk
     # scale the `True` values to burn_value and return
+    boundary_mask = boundary_mask > 0  # need to binarize to get burn val right
     output_arr = boundary_mask.astype('uint8')*burn_value
 
     if out_file:
@@ -259,7 +287,7 @@ def boundary_mask(footprint_mask=None, out_file=None, reference_im=None,
 
 def contact_mask(df, out_file=None, reference_im=None, geom_col='geometry',
                  affine_obj=None, shape=(900, 900), out_type='int',
-                 contact_spacing=5, burn_value=255):
+                 contact_spacing=10, burn_value=255):
     """Create a pixel mask labeling closely juxtaposed objects.
 
     Notes
@@ -307,6 +335,7 @@ def contact_mask(df, out_file=None, reference_im=None, geom_col='geometry',
         raise ValueError(
             'If saving output to file, `reference_im` must be provided.')
     df = _check_df_load(df)
+    df[geom_col] = df[geom_col].apply(_check_wkt_load)  # load in geoms if wkt
     if reference_im:
         reference_im = _check_rasterio_im_load(reference_im)
     # grow geometries by half `contact_spacing` to find overlaps
@@ -317,10 +346,17 @@ def contact_mask(df, out_file=None, reference_im=None, geom_col='geometry',
     df_for_footprint = pd.DataFrame({'shape_name': ['overlap'],
                                      'geometry': [intersect_poly]})
     # use `footprint_mask` to create the overlap mask
-    output_arr = footprint_mask(df_for_footprint, out_file=out_file,
-                                reference_im=reference_im, geom_col='geometry',
-                                affine_obj=affine_obj, shape=shape,
-                                out_type=out_type, burn_value=burn_value)
+    contact_msk = footprint_mask(df_for_footprint, reference_im=reference_im,
+                                 geom_col='geometry', affine_obj=affine_obj,
+                                 shape=shape, out_type=out_type,
+                                 burn_value=burn_value)
+    footprint_msk = footprint_mask(df, reference_im=reference_im,
+                                   geom_col=geom_col, affine_obj=affine_obj,
+                                   shape=shape, out_type=out_type,
+                                   burn_value=burn_value)
+    contact_msk[footprint_msk > 0] = 0
+    contact_msk = contact_msk > 0
+    output_arr = contact_msk.astype('uint8')*burn_value
 
     if out_file:
         meta = reference_im.meta.copy()
