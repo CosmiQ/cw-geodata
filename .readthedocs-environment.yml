@@ -1,7 +1,7 @@
 name: cw-geodata
 dependencies:
-  - python=3.6
-  - pip=18.1  # pinned because 19.0.3 was having issues with certifi install
+  - python=3.5
+  - pip
   - shapely
   - fiona
   - pandas
