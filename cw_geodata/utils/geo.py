@@ -28,6 +28,8 @@ def list_to_affine(xform_mat):
         An affine transformation object.
     """
     # first make sure it's not in gdal order
+    if len(xform_mat) > 6:
+        xform_mat = xform_mat[0:6]
     if rasterio.transform.tastes_like_gdal(xform_mat):
         return Affine.from_gdal(*xform_mat)
     else:
@@ -146,6 +148,14 @@ def _split_multigeom_row(gdf_row, geom_col):
 
 def _split_multigeom(multigeom):
     return list(multigeom)
+
+
+def _reduce_geom_precision(geom, precision=2):
+    geojson = mapping(geom)
+    geojson['coordinates'] = np.round(np.array(geojson['coordinates']),
+                                      precision)
+
+    return shape(geojson)
 
 
 # PRETEND THIS ISN'T HERE AT THE MOMENT
