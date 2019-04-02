@@ -2,24 +2,25 @@ import os
 import shapely
 from affine import Affine
 import rasterio
-from .utils import _check_df_load, _check_gdf_load, _check_rasterio_im_load
-from .image import get_geo_transform
-from .geo_utils.core import list_to_affine
-from shapely.geometry import box, Polygon, MultiPolygon
-from shapely.geometry import MultiLineString
+from rasterio.warp import transform_bounds
+from ..utils.geo import list_to_affine, _reduce_geom_precision
+from ..utils.core import _check_gdf_load
+from ..raster_image.image import get_geo_transform
+from shapely.geometry import box, Polygon
 import pandas as pd
 import geopandas as gpd
 from rtree.core import RTreeError
 
 
-def convert_poly_coords(geom, raster_src=None, affine_obj=None, inverse=False):
+def convert_poly_coords(geom, raster_src=None, affine_obj=None, inverse=False,
+                        precision=None):
     """Georegister geometry objects currently in pixel coords or vice versa.
 
     Arguments
     ---------
-    geom : :class:`shapely.Geometry` or str
-        A :class:`shapely.Geometry`, or WKT string-formatted geometry object
-        currently in pixel coordinates.
+    geom : :class:`shapely.geometry.shape` or str
+        A :class:`shapely.geometry.shape`, or WKT string-formatted geometry
+        object currently in pixel coordinates.
     raster_src : str, optional
         Path to a raster image with georeferencing data to apply to `geom`.
         Alternatively, an opened :class:`rasterio.Band` object or
@@ -32,6 +33,9 @@ def convert_poly_coords(geom, raster_src=None, affine_obj=None, inverse=False):
     inverse : bool, optional
         If true, will perform the inverse affine transformation, going from
         geospatial coordinates to pixel coordinates.
+    precision : int, optional
+        Decimal precision for the polygon output. If not provided, rounding
+        is skipped.
 
     Returns
     -------
@@ -43,13 +47,16 @@ def convert_poly_coords(geom, raster_src=None, affine_obj=None, inverse=False):
     if not raster_src and not affine_obj:
         raise ValueError("Either raster_src or affine_obj must be provided.")
 
-    if raster_src:
+    if raster_src is not None:
         affine_xform = get_geo_transform(raster_src)
     else:
         if isinstance(affine_obj, Affine):
             affine_xform = affine_obj
         else:
-            # assume it's a list with valid format.
+            # assume it's a list in either gdal or "standard" order
+            # (list_to_affine checks which it is)
+            if len(affine_obj) == 9:  # if it's straight from rasterio
+                affine_obj = affine_obj[0:6]
             affine_xform = list_to_affine(affine_obj)
 
     if inverse:  # geo->px transform
@@ -58,7 +65,7 @@ def convert_poly_coords(geom, raster_src=None, affine_obj=None, inverse=False):
     if isinstance(geom, str):
         # get the polygon out of the wkt string
         g = shapely.wkt.loads(geom)
-    elif isinstance(geom, shapely.Geometry):
+    elif isinstance(geom, shapely.geometry.base.BaseGeometry):
         g = geom
     else:
         raise TypeError('The provided geometry is not an accepted format. ' +
@@ -74,11 +81,14 @@ def convert_poly_coords(geom, raster_src=None, affine_obj=None, inverse=False):
     if isinstance(geom, str):
         # restore to wkt string format
         xformed_g = shapely.wkt.dumps(xformed_g)
+    if precision is not None:
+        xformed_g = _reduce_geom_precision(xformed_g, precision=precision)
 
     return xformed_g
 
 
-def affine_transform_gdf(gdf, affine_obj, inverse=False, geom_col="geometry"):
+def affine_transform_gdf(gdf, affine_obj, inverse=False, geom_col="geometry",
+                         precision=None):
     """Perform an affine transformation on a GeoDataFrame.
 
     Arguments
@@ -94,14 +104,20 @@ def affine_transform_gdf(gdf, affine_obj, inverse=False, geom_col="geometry"):
         ``[a, b, d, e, xoff, yoff]`` list or an :class:`affine.Affine` object.
     inverse : bool, optional
         Use this argument to perform the inverse transformation.
+    geom_col : str, optional
+        The column in `gdf` corresponding to the geometry. Defaults to
+        ``'geometry'``.
+    precision : int, optional
+        Decimal precision to round the geometries to. If not provided, no
+        rounding is performed.
     """
     if isinstance(gdf, str):  # assume it's a geojson
         if gdf.lower().endswith('json'):
             gdf = gpd.read_file(gdf)
         elif gdf.lower().endswith('csv'):
             gdf = pd.read_csv(gdf)
-            gdf.columns[gdf.columns == geom_col] = 'geometry'
-            if not isinstance(gdf.geometry[0], Polygon):
+            gdf = gdf.rename(columns={geom_col: 'geometry'})
+            if not isinstance(gdf['geometry'][0], Polygon):
                 gdf['geometry'] = gdf['geometry'].apply(shapely.wkt.loads)
         else:
             raise ValueError(
@@ -109,10 +125,14 @@ def affine_transform_gdf(gdf, affine_obj, inverse=False, geom_col="geometry"):
     gdf["geometry"] = gdf["geometry"].apply(convert_poly_coords,
                                             affine_obj=affine_obj,
                                             inverse=inverse)
+    if precision is not None:
+        gdf['geometry'] = gdf['geometry'].apply(
+            _reduce_geom_precision, precision=precision)
     return gdf
 
 
-def georegister_px_df(df, im_fname=None, affine_obj=None, crs=None):
+def georegister_px_df(df, im_fname=None, affine_obj=None, crs=None,
+                      geom_col='geometry', precision=None):
     """Convert a dataframe of geometries in pixel coordinates to a geo CRS.
 
     Arguments
@@ -128,6 +148,17 @@ def georegister_px_df(df, im_fname=None, affine_obj=None, crs=None):
         An affine transformation to apply to `geom` in the form of an
         ``[a, b, d, e, xoff, yoff]`` list or an :class:`affine.Affine` object.
         Required if not using `raster_src`.
+    crs : dict, optional
+        The coordinate reference system for the output GeoDataFrame. Required
+        if not providing a raster image to extract the information from. Format
+        should be ``{'init': 'epsgxxxx'}``, replacing xxxx with the EPSG code.
+    geom_col : str, optional
+        The column containing geometry in `df`. If not provided, defaults to
+        ``"geometry"``.
+    precision : int, optional
+        The decimal precision for output geometries. If not provided, the
+        vertex locations won't be rounded.
+
     """
     if im_fname is not None:
         affine_obj = rasterio.open(im_fname).transform
@@ -137,34 +168,31 @@ def georegister_px_df(df, im_fname=None, affine_obj=None, crs=None):
             raise ValueError(
                 'If an image path is not provided, ' +
                 'affine_obj and crs must be.')
-    tmp_df = affine_transform_gdf(df, affine_obj)
+    tmp_df = affine_transform_gdf(df, affine_obj, geom_col=geom_col,
+                                  precision=precision)
 
     return gpd.GeoDataFrame(tmp_df, crs=crs)
 
 
-def geojson_to_px_gdf(geojson, im_path, recurse=False):
+def geojson_to_px_gdf(geojson, im_path, precision=None):
     """Convert a geojson or set of geojsons from geo coords to px coords.
 
     Arguments
     ---------
     geojson : str
-        Path to a single geojson or a directory of geojson files. If a
-        directory, all geojsons within that folder will be loaded, transformed,
-        and concatenated into a single :class:`geopandas.GeoDataFrame`. This
-        function will also accept a :class:`pandas.DataFrame` or
-        :class:`geopandas.GeoDataFrame` with a column named ``'geometry'`` in
-        this argument.
+        Path to a geojson. This function will also accept a
+        :class:`pandas.DataFrame` or :class:`geopandas.GeoDataFrame` with a
+        column named ``'geometry'`` in this argument.
     im_path : str
-        Path to a georeferenced image (ie a GeoTIFF) or a directory of GeoTIFFs
-        that geolocate to the same geography as the `geojson`(s). If a
-        directory, the bounds of each GeoTIFF will be loaded in and all
-        overlapping geometries will be transformed. This function will also
-        accept a :class:`osgeo.gdal.Dataset` or :class:`rasterio.DatasetReader`
-        with georeferencing information in this argument.
-    recurse : bool, optional
-        If a directory is provided for either `geojson` or `im_path`, should
-        sub-directories be recursively searched for additional files of the
-        same type? Defaults to no (false).
+        Path to a georeferenced image (ie a GeoTIFF) that geolocates to the
+        same geography as the `geojson`(s). If a directory, the bounds of each
+        GeoTIFF will be loaded in and all overlapping geometries will be
+        transformed. This function will also accept a
+        :class:`osgeo.gdal.Dataset` or :class:`rasterio.DatasetReader` with
+        georeferencing information in this argument.
+    precision : int, optional
+        The decimal precision for output geometries. If not provided, the
+        vertex locations won't be rounded.
 
     Returns
     -------
@@ -175,81 +203,26 @@ def geojson_to_px_gdf(geojson, im_path, recurse=False):
         geojson (if available) and images for reference.
 
     """
-    im_bbox_and_xform = {}  # will be a filepath: bounding box polygon dict
-    im_crs = None  # will be replaced with image's CRS
-
-    # get the bbox and affine transforms for the image(s)
+    # get the bbox and affine transforms for the image
     if isinstance(im_path, str):
-        if os.path.isdir(im_path):
-            paths = []
-            if recurse:
-                w = os.walk(im_path)
-                for subdir in w:
-                    paths.extend([os.path.join(subdir[0], f) for f in subdir[2]
-                                  if f.lower().endswith('tif')])
-            else:
-                paths = [os.path.join(im_path, f) for f in os.listdir(im_path)
-                         if f.lower().endswith('tif')]
-
-        else:  # if it's just one image
-            paths = [im_path]
-        # TODO: Optimize this using pd dfs and .apply() rather than iterating
-
-        for p in paths:
-            im_bbox_and_xform[p] = {'bbox': box(*rasterio.open(p).bounds),
-                                    'affine_obj': rasterio.open(p).transform}
-            if im_crs is None:
-                im_crs = rasterio.open(p).crs
+        bbox = box(*rasterio.open(im_path).bounds)
+        affine_obj = rasterio.open(im_path).transform
+        im_crs = rasterio.open(im_path).crs
 
     else:
-        im_bbox_and_xform[im_path.name] = {'bbox': box(im_path.bounds),
-                                           'affine_obj': im_path.transform}
+        bbox = box(im_path.bounds)
+        affine_obj = im_path.transform
         im_crs = im_path.crs
 
     # make sure the geo vector data is loaded in as geodataframe(s)
-    if isinstance(geojson, str):
-        if os.path.isdir(geojson):
-            paths = []
-            if recurse:
-                w = os.walk(geojson)
-                for subdir in w:
-                    paths.extend([subdir[0] + f for f in subdir[2]
-                                  if f.lower().endswith('json')])
-            else:
-                paths = [f for f in os.listdir(geojson)
-                         if f.lower().endswith('json')]
+    gdf = _check_gdf_load(geojson)
 
-        else:
-            paths = [geojson]
-        gdfs = []
+    overlap_gdf = get_overlapping_subset(gdf, bbox=bbox, bbox_crs=im_crs)
+    transformed_gdf = affine_transform_gdf(overlap_gdf, affine_obj=affine_obj,
+                                           inverse=True, precision=precision)
+    transformed_gdf['image_fname'] = os.path.split(im_path)[1]
 
-        for p in paths:
-            tmp_gdf = gpd.read_file(p)
-            tmp_gdf['geojson_fname'] = p
-            gdfs.append()
-        gdf = gpd.GeoDataFrame(pd.concat(gdfs, ignore_index=True),
-                               crs=gdfs[0].crs)  # assume crs is the same
-
-    elif isinstance(geojson, pd.DataFrame):
-        if isinstance(geojson, gpd.GeoDataFrame):
-            gdf = geojson
-        else:
-            # convert "normal" pandas df to GeoDataFrame
-            gdf = gpd.GeoDataFrame(geojson, crs=im_crs)
-
-    output_dfs = []
-
-    for path, bbox_and_xform in im_bbox_and_xform.items():
-        overlap_gdf = get_overlapping_subset(gdf, bbox=bbox_and_xform['bbox'],
-                                             bbox_crs=im_crs)
-        transformed_gdf = affine_transform_gdf(overlap_gdf,
-                                           bbox_and_xform['transform'],
-                                           inverse=True)
-        transformed_gdf['image_fname'] = path
-        output_dfs.append(transformed_gdf)
-    output_df = pd.concat(output_dfs, ignore_index=True)
-
-    return output_df
+    return transformed_gdf
 
 
 def get_overlapping_subset(gdf, im=None, bbox=None, bbox_crs=None):
@@ -292,79 +265,16 @@ def get_overlapping_subset(gdf, im=None, bbox=None, bbox_crs=None):
     sindex = gdf.sindex
     # use transform_bounds in case the crs is different - no effect if not
     if im:
-        bbox = rasterio.warp.transform_bounds(im.crs, gdf.crs, *im.bounds)
+        bbox = transform_bounds(im.crs, gdf.crs, *im.bounds)
     else:
         if isinstance(bbox, Polygon):
             bbox = bbox.bounds
         if not bbox_crs:
             bbox_crs = gdf.crs
-        bbox = rasterio.warp.transform_bounds(bbox_crs, gdf.crs, *bbox)
+        bbox = transform_bounds(bbox_crs, gdf.crs, *bbox)
     try:
         intersectors = list(sindex.intersection(bbox))
     except RTreeError:
         intersectors = []
 
     return gdf.iloc[intersectors, :]
-
-
-def split_multi_geometries(gdf, obj_id_col=None, group_col=None,
-                           geom_col='geometry'):
-    """Split apart MultiPolygon or MultiLineString geometries.
-
-    Arguments
-    ---------
-    gdf : :class:`geopandas.GeoDataFrame` or `str`
-        A :class:`geopandas.GeoDataFrame` or path to a geojson containing
-        geometries.
-    obj_id_col : str, optional
-        If one exists, the name of the column that uniquely identifies each
-        geometry (e.g. the ``"BuildingId"`` column in many SpaceNet datasets).
-        This will be tracked so multiple objects don't get produced with
-        the same ID. Note that object ID column may be renumbered differently
-        on output. If passed, `group_col` must also be provided.
-    group_col : str, optional
-        A column to identify groups for sequential numbering (for example,
-        ``'ImageId'`` for sequential number of ``'BuildingId'``). Must be
-        provided if `obj_id_col` is passed.
-    geom_col : str, optional
-        The name of the column in `gdf` that corresponds to geometry. Defaults
-        to ``'geometry'``.
-
-    Returns
-    -------
-    :class:`geopandas.GeoDataFrame`
-        A `geopandas.GeoDataFrame` that's identical to the input, except with
-        the multipolygons split into separate rows, and the object ID column
-        renumbered (if one exists).
-
-    """
-    if obj_id_col and not group_col:
-        raise ValueError('group_col must be provided if obj_id_col is used.')
-    gdf2 = _check_gdf_load(gdf)
-
-    split_geoms_gdf = pd.concat(
-        gdf2.apply(_split_multigeom_row, axis=1, geom_col=geom_col).tolist())
-    gdf2.drop(index=split_geoms_gdf.index.unique())  # remove multipolygons
-    gdf2 = gpd.GeoDataFrame(pd.concat([gdf2, split_geoms_gdf],
-                                      reset_index=True), crs=gdf.crs)
-
-    if obj_id_col:
-        gdf2[obj_id_col] = gdf2.groupby(group_col).cumcount()+1
-
-    return gdf2
-
-
-def _split_multigeom_row(gdf_row, geom_col):
-    new_rows = []
-    if isinstance(gdf_row[geom_col], MultiPolygon) \
-            or isinstance(gdf_row[geom_col], MultiLineString):
-        new_polys = _split_multigeom(gdf_row[geom_col])
-        for poly in new_polys:
-            row_w_poly = gdf_row.copy()
-            row_w_poly[geom_col] = poly
-            new_rows.append(row_w_poly)
-    return pd.DataFrame(new_rows)
-
-
-def _split_multigeom(multigeom):
-    return list(multigeom)

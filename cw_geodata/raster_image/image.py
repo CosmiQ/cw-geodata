@@ -25,6 +25,6 @@ def get_geo_transform(raster_src):
     elif isinstance(raster_src, rasterio.DatasetReader):
         affine_obj = raster_src.transform
     elif isinstance(raster_src, gdal.Dataset):
-        affine_obj = Affine.from_gdal(raster_src.GetGeoTransform())
+        affine_obj = Affine.from_gdal(*raster_src.GetGeoTransform())
 
     return affine_obj

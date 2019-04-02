@@ -1,7 +1,6 @@
 language: python
 sudo: false
 python:
-  - "2.7"
   - "3.6"
 
 # command to install dependencies
@@ -27,7 +26,7 @@ install:
   - conda env create -n cw-geodata --file=environment.yml
   - source activate cw-geodata
   - python --version
-  - pip install -q -e .
+  - pip install -q -e .[test]
   - pip install codecov pytest pytest-cov
 # command to run tests
 script:

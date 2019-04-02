@@ -1,19 +1,15 @@
 name: cw-geodata
-channels:
-  - conda-forge
-  - defaults
 dependencies:
   - python=3.6
   - pip
   - shapely
+  - fiona
   - pandas
   - geopandas
   - numpy
-  - scipy
   - scikit-image
-  - rtree
   - networkx
   - rasterio
   - pip:
     - affine
-    - osmnx==0.8.2
+    - osmnx

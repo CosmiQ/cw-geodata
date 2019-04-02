@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# MacOS stuff:
+.DS_Store
+
 # C extensions
 *.so
 
@@ -114,3 +117,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Project-specific
+sandbox.ipynb
