@@ -10,7 +10,7 @@ import geopandas as gpd
 import fiona
 
 
-def geojson_to_graph(vector_file, graph_name=None, retain_all=True,
+def geojson_to_graph(geojson, graph_name=None, retain_all=True,
                      network_type='all_private', valid_road_types=None,
                      road_type_field='type', first_path_idx=0,
                      first_node_idx=0, verbose=False):
@@ -18,7 +18,7 @@ def geojson_to_graph(vector_file, graph_name=None, retain_all=True,
 
     Arguments
     ---------
-    vector_file : str
+    geojson : str
         Path to a geojson file (or any other OGR-compatible vector file) to
         load network edges and nodes from.
     graph_name : str, optional
@@ -26,6 +26,12 @@ def geojson_to_graph(vector_file, graph_name=None, retain_all=True,
     retain_all : bool, optional
         If ``True`` , the entire graph will be returned even if some parts are
         not connected. Defaults to ``True``.
+    network_type : str, optional
+        The type of graph (i.e. map) being generated, to determine
+        directionality. Defaults to ``'all_private'`` .  * NOTE: * This
+        argument is deprecated in osmnx >= 0.9, and this package therefore
+        requires osmnx 0.8.2. See :func:`osmnx.core.add_path` for more info
+        and possible values.
     valid_road_types : :class:`list` of :class:`int` s, optional
         The road types to permit in the graph. If not provided, it's assumed
         that all road types are permitted. The possible values are integers
@@ -53,10 +59,6 @@ def geojson_to_graph(vector_file, graph_name=None, retain_all=True,
     verbose : bool, optional
         Verbose print output. Defaults to ``False`` .
 
-    ..deprecated:: 0.1.1
-        The `network_type` argument no longer has any effect in
-        :func:`osmnx.core.add_paths` and is now ignored.
-
     Returns
     -------
     G : :class:`networkx.MultiGraph`
@@ -65,12 +67,18 @@ def geojson_to_graph(vector_file, graph_name=None, retain_all=True,
         `retain_all` = ``False``). Edge lengths are weighted based on
         geographic distance.
     """
+    # due to an annoying feature of loading these graphs, the numeric road
+    # type identifiers are presented as string versions. we therefore reformat
+    # the valid_road_types list as strings.
+    if valid_road_types is not None:
+        valid_road_types = [str(i) for i in valid_road_types]
+
     log('Creating networkx graph...')
     start_time = time.time()
     # create the graph as a MultiGraph and set the original CRS to EPSG 4326
 
     # extract nodes and paths
-    nodes, paths = get_nodes_paths(vector_file,
+    nodes, paths = get_nodes_paths(geojson,
                                    valid_road_types=valid_road_types,
                                    first_path_idx=first_path_idx,
                                    first_node_idx=first_node_idx,
@@ -82,7 +90,7 @@ def geojson_to_graph(vector_file, graph_name=None, retain_all=True,
     # each path dict has a list of node_idxs as well as properties metadata.
 
     # initialize the graph object
-    G = nx.MultiGraph(name=graph_name, crs={'init': 'epsg:4326'})
+    G = nx.MultiDiGraph(name=graph_name, crs={'init': 'epsg:4326'})
     if not nodes:  # if there are no nodes in the graph
         return G
     if verbose:
@@ -92,7 +100,7 @@ def geojson_to_graph(vector_file, graph_name=None, retain_all=True,
     for node, data in nodes.items():
         G.add_node(node, **data)
     # add each path to the graph
-    G = core.add_paths(G, paths)
+    G = core.add_paths(G, paths, network_type)
     if not retain_all:
         # keep only largest connected component of graph unless retain_all
         G = core.get_largest_component(G)
@@ -166,7 +174,7 @@ def get_nodes_paths(vector_file, first_path_idx=0, first_node_idx=0,
     path_idx = first_path_idx
     node_idx = first_node_idx
     if valid_road_types is None:
-        valid_road_types = [1, 2, 3, 4, 5, 6, 7]
+        valid_road_types = ['1', '2', '3', '4', '5', '6', '7']
 
     with fiona.open(vector_file, 'r') as source:
         nodes = {}
@@ -184,11 +192,11 @@ def get_nodes_paths(vector_file, first_path_idx=0, first_node_idx=0,
                 road_type = properties['road_type']
             else:
                 road_type = 'None'
-
             if verbose:
                 print("\ngeom:", geom)
                 print("   properties:", properties)
                 print("   road_type:", road_type)
+                print("   road_type type: {}".format(type(road_type)))
 
             # check if road type allowable and a valid road, skip if not
             if geom['type'] == 'LineString' or \

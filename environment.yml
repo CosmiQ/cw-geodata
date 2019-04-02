@@ -16,4 +16,4 @@ dependencies:
   - rasterio
   - pip:
     - affine
-    - osmnx
+    - osmnx==0.8.2
