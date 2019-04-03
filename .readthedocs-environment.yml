@@ -12,4 +12,3 @@ dependencies:
   - rasterio
   - pip:
     - affine
-    - osmnx
