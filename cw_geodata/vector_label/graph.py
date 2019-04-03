@@ -232,6 +232,8 @@ def geojson_to_graph(geojson, graph_name=None, retain_all=True,
         # calculate edge length using euclidean distance and a weighting term
         path.set_edge_weights(data_key=weight_norm_field, inverse=inverse)
         edges = [(*edge.nodes, edge.weight) for edge in path]
+        if verbose:
+            print(edges)
         G.add_weighted_edges_from(edges)
     if not retain_all:
         # keep only largest connected component of graph unless retain_all
@@ -310,7 +312,10 @@ def get_nodes_paths(vector_file, first_node_idx=0, node_gdf=gpd.GeoDataFrame(),
 
     # convert to geoseries and drop duplicates (have to flatten first)
     node_series = gpd.GeoSeries([i for sublist in node_list for i in sublist])
-    node_series = node_series.drop_duplicates().reset_index(drop=True)
+    # NOTE: It is ESSENTIAL to use keep='last' in the line below; otherwise, it
+    # misses a duplicate if it includes the first element of the series.
+    node_series = node_series.drop_duplicates(keep='last')
+    node_series = node_series.reset_index(drop=True)
     node_series.name = 'geometry'
     node_series.index.name = 'node_idx'
     node_gdf = gpd.GeoDataFrame(node_series.reset_index())
