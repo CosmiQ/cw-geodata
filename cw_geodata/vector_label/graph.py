@@ -1,11 +1,13 @@
 from __future__ import print_function, division, absolute_import
 import numpy as np
+import geopandas as gpd
 from ..utils.geo import get_subgraph
 import shapely
 from shapely.geometry import Point
 import networkx as nx
 import geopandas as gpd
 import fiona
+from multiprocessing import Pool
 
 
 class Node(object):
@@ -139,7 +141,7 @@ class Path(object):
 def geojson_to_graph(geojson, graph_name=None, retain_all=True,
                      valid_road_types=None, road_type_field='type', edge_idx=0,
                      first_node_idx=0, weight_norm_field=None, inverse=False,
-                     verbose=False):
+                     workers=1, verbose=False):
     """Convert a geojson of path strings to a network graph.
 
     Arguments
@@ -181,6 +183,9 @@ def geojson_to_graph(geojson, graph_name=None, retain_all=True,
         :func:`Path.set_edge_weights`. Defaults to ``None``, in which case
         no weighting is performed (weights calculated solely using Euclidean
         distance.)
+    workers : int, optional
+        Number of parallel processes to run for parallelization. Defaults to 1.
+        Should not be greater than the number of CPUs available.
     verbose : bool, optional
         Verbose print output. Defaults to ``False`` .
 
@@ -206,7 +211,7 @@ def geojson_to_graph(geojson, graph_name=None, retain_all=True,
                                    valid_road_types=valid_road_types,
                                    first_node_idx=first_node_idx,
                                    road_type_field=road_type_field,
-                                   verbose=verbose)
+                                   workers=workers, verbose=verbose)
     # nodes is a dict of node_idx: node_params (e.g. location, metadata)
     # pairs.
     # paths is a dict of path dicts. the path key is the path_idx.
@@ -227,6 +232,8 @@ def geojson_to_graph(geojson, graph_name=None, retain_all=True,
         # calculate edge length using euclidean distance and a weighting term
         path.set_edge_weights(data_key=weight_norm_field, inverse=inverse)
         edges = [(*edge.nodes, edge.weight) for edge in path]
+        if verbose:
+            print(edges)
         G.add_weighted_edges_from(edges)
     if not retain_all:
         # keep only largest connected component of graph unless retain_all
@@ -238,7 +245,7 @@ def geojson_to_graph(geojson, graph_name=None, retain_all=True,
 
 
 def get_nodes_paths(vector_file, first_node_idx=0, node_gdf=gpd.GeoDataFrame(),
-                    valid_road_types=None, road_type_field='type',
+                    valid_road_types=None, road_type_field='type', workers=1,
                     verbose=False):
     """
     Extract nodes and paths from a vector file.
@@ -276,6 +283,9 @@ def get_nodes_paths(vector_file, first_node_idx=0, node_gdf=gpd.GeoDataFrame(),
     road_type_field : str, optional
         The name of the attribute containing road type information in
         `vector_file`. Defaults to ``'type'``.
+    workers : int, optional
+        Number of worker processes to use for parallelization. Defaults to 1.
+        Should not exceed the number of CPUs available.
     verbose : bool, optional
         Verbose print output. Defaults to ``False``.
 
@@ -289,62 +299,112 @@ def get_nodes_paths(vector_file, first_node_idx=0, node_gdf=gpd.GeoDataFrame(),
             :class:`Node` s to be added to the graph.
 
     """
-    node_idx = first_node_idx
     if valid_road_types is None:
         valid_road_types = ['1', '2', '3', '4', '5', '6', '7']
 
     with fiona.open(vector_file, 'r') as source:
-        paths = []
 
-        for feature in source:
-            properties = feature['properties']
-            # TODO: create more adjustable filter
-            if road_type_field in properties:
-                road_type = properties[road_type_field]
-            elif 'highway' in properties:
-                road_type = properties['highway']
-            elif 'road_type' in properties:
-                road_type = properties['road_type']
-            else:
-                road_type = 'None'
-            if verbose:
-                print("\ngeom: {}".format(feature['geometry']))
-                print("   properties:", properties)
-                print("   road_type:", road_type)
-                print("   road_type type: {}".format(type(road_type)))
+        with Pool(processes=workers) as pool:
+            node_list = pool.map(_get_all_nodes, source,
+                                 chunksize=10)
+            pool.close()
+        source.close()
 
-            # check if road type allowable and a valid road, skip if not
-            geom = feature['geometry']
-            if geom['type'] == 'LineString' or \
-                    geom['type'] == 'MultiLineString':
-                if road_type not in valid_road_types or \
-                        'LINESTRING EMPTY' in properties.values():
-                    if verbose:
-                        print("Invalid road type, skipping...")
-                    continue
+    # convert to geoseries and drop duplicates (have to flatten first)
+    node_series = gpd.GeoSeries([i for sublist in node_list for i in sublist])
+    # NOTE: It is ESSENTIAL to use keep='last' in the line below; otherwise, it
+    # misses a duplicate if it includes the first element of the series.
+    node_series = node_series.drop_duplicates(keep='last')
+    node_series = node_series.reset_index(drop=True)
+    node_series.name = 'geometry'
+    node_series.index.name = 'node_idx'
+    node_gdf = gpd.GeoDataFrame(node_series.reset_index())
+    node_gdf['node'] = node_gdf.apply(
+        lambda p: Node(p['node_idx'], p['geometry'].x, p['geometry'].y),
+        axis=1)
 
-            if geom['type'] == 'LineString':
-                linestring = shapely.geometry.shape(geom)
-                edges, node_idx, node_gdf = linestring_to_edge(
-                    linestring, node_idx, node_gdf)
+    # create another parallelized operation to iterate through edges
+    # _init_worker passes the node_series to every process in the pool
+    with fiona.open(vector_file, 'r') as source:
+        with Pool(
+                processes=workers, initializer=_init_worker,
+                initargs=(node_gdf, valid_road_types, road_type_field)
+                ) as pool:
+            zipped_edges_properties = pool.map(parallel_linestring_to_path,
+                                               source, chunksize=10)
+        pool.close()
+    source.close()
 
-            elif geom['type'] == 'MultiLineString':
-                # do the same thing as above, but do it for each piece
-                edges = []
-                for linestring in shapely.geometry.shape(geom):
-                    edge_set, node_idx, node_gdf = linestring_to_edge(
-                        linestring, node_idx, node_gdf)
-                    edges.extend(edge_set)
-
-            path = Path(edges=edges, properties=properties)
-            paths.append(path)
-
-        nodes = node_gdf['node'].tolist()
-
+    nodes = node_gdf['node'].tolist()
+    paths = []
+    # it would've been better to do this within the multiprocessing pool but
+    # it's REALLY hard to share objects in memory across processes without
+    # copies being made (and therefore nodes being duplicated)
+    for edges, properties in zipped_edges_properties:
+        path = Path(
+            edges=[Edge((nodes[edge[0]], nodes[edge[1]])) for edge in edges],
+            properties=properties
+            )
+        paths.append(path)
     return nodes, paths
 
 
-def linestring_to_edge(linestring, node_idx, node_gdf=gpd.GeoDataFrame()):
+def parallel_linestring_to_path(feature):
+    """Read in a feature line from a fiona-opened shapefile and get the edges.
+
+    Arguments
+    ---------
+    feature : dict
+        An item from a :class:`fiona.open` iterable with the key ``'geometry'``
+        containing :class:`shapely.geometry.line.LineString` s or
+        :class:`shapely.geometry.line.MultiLineString` s.
+
+    Returns
+    -------
+    A list of :class:`Path` s containing all edges in the LineString or
+    MultiLineString.
+
+    Notes
+    -----
+    This function depends on ``node_series`` and ``valid_road_types``, which
+    are passed by an initializer as items in ``var_dict``.
+
+    """
+
+    properties = feature['properties']
+    # TODO: create more adjustable filter
+    if var_dict['road_type_field'] in properties:
+        road_type = properties[var_dict['road_type_field']]
+    elif 'highway' in properties:
+        road_type = properties['highway']
+    elif 'road_type' in properties:
+        road_type = properties['road_type']
+    else:
+        road_type = 'None'
+
+    geom = feature['geometry']
+    if geom['type'] == 'LineString' or \
+            geom['type'] == 'MultiLineString':
+        if road_type not in var_dict['valid_road_types'] or \
+                'LINESTRING EMPTY' in properties.values():
+            return
+
+    if geom['type'] == 'LineString':
+        linestring = shapely.geometry.shape(geom)
+        edges = linestring_to_edges(linestring, var_dict['node_gdf'])
+
+    elif geom['type'] == 'MultiLineString':
+        # do the same thing as above, but do it for each piece
+        edges = []
+        for linestring in shapely.geometry.shape(geom):
+            edge_set, node_idx, node_gdf = linestring_to_edges(
+                linestring, var_dict['node_gdf'])
+            edges.extend(edge_set)
+
+    return edges, properties
+
+
+def linestring_to_edges(linestring, node_gdf):
     """Collect nodes in a linestring and add them to an edge.
 
     Arguments
@@ -352,58 +412,65 @@ def linestring_to_edge(linestring, node_idx, node_gdf=gpd.GeoDataFrame()):
     linestring : :class:`shapely.geometry.LineString`
         A :class:`shapely.geometry.LineString` object to extract nodes and
         edges from.
-    node_idx : int
-        The index to assign the first node in the path. Assigned to
-        ``node['osmid']`` , which is the ID attribute for the node `dict` .
-        Will be incremented for each node in the path.
-    node_gdf : :class:`geopandas.GeoDataFrame`, optional
-        A :class:`geopandas.GeoDataFrame` of existing nodes already in a graph
-        so that nodes at the same location aren't duplicated. The `node_idx`
-        will be copied out of `node_gdf` rather than using the current value
-        if assigning a node that already exists. An empty gdf is created if
-        `node_gdf` isn't provided.
-    road_type_field : str, optional
-        The attribute containing road type information in `properties`.
-        Defaults to ``'type'`` .
+    node_series : :class:`geopandas.GeoSeries`
+        A :class:`geopandas.GeoSeries` containing a
+        :class:`shapely.geometry.point.Point` for every node to be added to the
+        graph.
 
     Returns
     -------
-    edge, node_idx, node_gdf : tuple
-        edge : :class:`Edge`
-            An :class:`Edge` instance containing all of the points in
-            `linestring` as :class:`Node` s in ``edge.nodes``.
-        node_idx : int
-            The numeric index of the last node in the path. Passed back so that
-            `Node.idx` s can be incremented and therefore won't overlap.
-        node_gdf : :class:`geopandas.GeoDataFrame`
-            A :class:`geopandas.GeoDataFrame` containing all nodes already
-            added to the graph so that future iterations through
-            `process_linestring` don't add new nodes at the same location.
+    edges : list
+        A list of :class:`Edge` s from ``linestring``.
 
     """
-
-    node_list = []
     edges = []
+    nodes = []
 
     for point in linestring.coords:
         point_shp = shapely.geometry.shape(Point(point))
+        nodes.append(
+            node_gdf.node_idx[node_gdf.distance(point_shp) == 0.0].values[0]
+            )
+        if len(nodes) > 1:
+            edges.append(nodes[-2:])
 
-        try:
-            matching_nodes = node_gdf[
-                node_gdf.distance(point_shp) == 0.0]['node'].values
-        except AttributeError:
-            matching_nodes = []
+    return edges
 
-        if len(matching_nodes) == 1:  # if the current node isn't already there
-            node = matching_nodes[0]
-        else:
-            node = Node(idx=node_idx, x=point[0], y=point[1])
-            node_idx += 1
-            # add the new node to the gdf
-            node_gdf = node_gdf.append({'geometry': point_shp, 'node': node},
-                                       ignore_index=True)
-        node_list.append(node)
-        if len(node_list) > 1:
-            edges.append(Edge(nodes=node_list[-2:]))
 
-    return edges, node_idx, node_gdf
+def _get_all_nodes(feature):
+    """Create a list of node geometries from a geojson of (multi)linestrings.
+
+    Note
+    ----
+    This function is intended to be used with pool.imap_unordered for
+    parallelization.
+
+    Returns
+    -------
+    A list of :class:`shapely.geometry.Point` instances. DUPLICATES CAN EXIST.
+    """
+    points = []
+    geom = feature['geometry']
+    if geom['type'] == 'LineString':
+        linestring = shapely.geometry.shape(geom)
+        points.extend(_get_linestring_points(linestring))
+    elif geom['type'] == 'MultiLineString':
+        for linestring in shapely.geometry.shape(geom):
+            points.extend(_get_linestring_points(linestring))
+
+    return points
+
+
+def _get_linestring_points(linestring):
+    points = []
+    for point in linestring.coords:
+        points.append(shapely.geometry.shape(Point(point)))
+    return points
+
+
+def _init_worker(node_gdf, valid_road_types, road_type_field):
+    the_dict = {'node_gdf': node_gdf,
+                'valid_road_types': valid_road_types,
+                'road_type_field': road_type_field}
+    global var_dict
+    var_dict = the_dict
