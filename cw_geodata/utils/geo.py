@@ -145,6 +145,47 @@ def split_multi_geometries(gdf, obj_id_col=None, group_col=None,
     return gdf2
 
 
+def get_subgraph(G, node_subset):
+    """
+    Create a subgraph from G. Code almost directly copied from osmnx.
+
+    Arguments
+    ---------
+    G : :class:`networkx.MultiDiGraph`
+        A graph to be subsetted
+    node_subset : `list`-like
+        The subset of nodes to induce a subgraph of `G`
+
+    Returns
+    -------
+    G2 : :class:`networkx`.MultiDiGraph
+        The subgraph of G that includes node_subset
+    """
+
+    node_subset = set(node_subset)
+
+    # copy nodes into new graph
+    G2 = G.fresh_copy()
+    G2.add_nodes_from((n, G.nodes[n]) for n in node_subset)
+
+    # copy edges to new graph, including parallel edges
+    if G2.is_multigraph:
+        G2.add_edges_from(
+            (n, nbr, key, d)
+            for n, nbrs in G.adj.items() if n in node_subset
+            for nbr, keydict in nbrs.items() if nbr in node_subset
+            for key, d in keydict.items())
+    else:
+        G2.add_edges_from(
+            (n, nbr, d)
+            for n, nbrs in G.adj.items() if n in node_subset
+            for nbr, d in nbrs.items() if nbr in node_subset)
+
+    # update graph attribute dict, and return graph
+    G2.graph.update(G.graph)
+    return G2
+
+
 def _split_multigeom_row(gdf_row, geom_col):
     new_rows = []
     if isinstance(gdf_row[geom_col], MultiPolygon) \
