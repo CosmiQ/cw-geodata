@@ -1,7 +1,11 @@
 language: python
-sudo: false
+sudo: true
 python:
   - "3.6"
+
+before_install:
+# get kcov for testing CLI scripts
+- wget https://github.com/SimonKagstrom/kcov/archive/master.tar.gz
 
 # command to install dependencies
 install:

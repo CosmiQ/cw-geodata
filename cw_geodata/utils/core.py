@@ -1,7 +1,8 @@
+import numpy as np
 import pandas as pd
 import geopandas as gpd
 import rasterio
-
+import skimage
 
 def _check_rasterio_im_load(im):
     """Check if `im` is already loaded in; if not, load it in."""
@@ -12,6 +13,17 @@ def _check_rasterio_im_load(im):
     else:
         raise ValueError(
             "{} is not an accepted image format for rasterio.".format(im))
+
+
+def _check_skimage_im_load(im):
+    """Check if `im` is already loaded in; if not, load it in."""
+    if isinstance(im, str):
+        return skimage.io.imread(im)
+    elif isinstance(im, np.ndarray):
+        return im
+    else:
+        raise ValueError(
+            "{} is not an accepted image format for scikit-image.".format(im))
 
 
 def _check_df_load(df):

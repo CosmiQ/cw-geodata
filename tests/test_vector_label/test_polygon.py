@@ -82,7 +82,7 @@ class TestGeoregisterPxDF(object):
     def test_transform_using_raster(self):
         input_df = os.path.join(data_dir, 'sample.csv')
         input_im = os.path.join(data_dir, 'sample_geotiff.tif')
-        output_gdf = georegister_px_df(input_df, im_fname=input_im,
+        output_gdf = georegister_px_df(input_df, im_path=input_im,
                                        geom_col='PolygonWKT_Pix', precision=0)
         truth_df = pd.read_csv(os.path.join(data_dir, 'aff_gdf_result.csv'))
         truth_df['geometry'] = truth_df['geometry'].apply(loads)

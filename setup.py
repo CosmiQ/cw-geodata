@@ -7,6 +7,12 @@ inst_reqs = ["shapely", "rtree", "geopandas", "pandas", "networkx"]
 extra_reqs = {
     'test': ['mock', 'pytest', 'pytest-cov', 'codecov']}
 
+console_scripts = [
+    'geotransform_footprints=cw_geodata.bin.geotransform_footprints:main',
+    'make_masks=cw_geodata.bin.make_masks:main',
+    'make_graphs=cw_geodata.bin.make_graphs:main'
+    ]
+
 setup(name='cw_geodata',
       version=version,
       description=u"""Geospatial raster and vector data processing for ML""",
@@ -27,5 +33,5 @@ setup(name='cw_geodata',
       include_package_data=True,
       install_requires=inst_reqs,
       extras_require=extra_reqs,
-      entry_points={}
+      entry_points={'console_scripts': console_scripts}
       )

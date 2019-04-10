@@ -1,13 +1,14 @@
 import os
 import numpy as np
 import pandas as pd
+import geopandas as gpd
 from affine import Affine
 from shapely.geometry import Polygon
 import skimage
 import rasterio
 from cw_geodata.data import data_dir
 from cw_geodata.vector_label.mask import footprint_mask, boundary_mask, \
-    contact_mask, df_to_px_mask
+    contact_mask, df_to_px_mask, mask_to_poly_geojson
 
 
 class TestFootprintMask(object):
@@ -195,3 +196,26 @@ class TestDFToPxMask(object):
         assert np.array_equal(output_mask, truth_mask)
         assert np.array_equal(saved_output_mask, truth_mask)
         os.remove(os.path.join(data_dir, 'test_out.tif'))  # clean up after
+
+
+class TestMaskToGDF(object):
+    """Tests for converting pixel masks to geodataframes or geojsons."""
+
+    def test_mask_to_gdf_basic(self):
+        gdf = mask_to_poly_geojson(
+            os.path.join(data_dir, 'sample_fp_mask_from_geojson.tif'))
+        truth_gdf = gpd.read_file(os.path.join(data_dir,
+                                               'gdf_from_mask_1.geojson'))
+        assert truth_gdf[['geometry', 'value']].equals(gdf)
+
+    def test_mask_to_gdf_geoxform_simplified(self):
+        gdf = mask_to_poly_geojson(
+            os.path.join(data_dir, 'sample_fp_mask_from_geojson.tif'),
+            reference_im=os.path.join(data_dir, 'sample_geotiff.tif'),
+            do_transform=True,
+            min_area=100,
+            simplify=True
+            )
+        truth_gdf = gpd.read_file(os.path.join(data_dir,
+                                               'gdf_from_mask_2.geojson'))
+        assert truth_gdf[['geometry', 'value']].equals(gdf)

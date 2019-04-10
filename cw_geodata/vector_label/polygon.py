@@ -131,8 +131,8 @@ def affine_transform_gdf(gdf, affine_obj, inverse=False, geom_col="geometry",
     return gdf
 
 
-def georegister_px_df(df, im_fname=None, affine_obj=None, crs=None,
-                      geom_col='geometry', precision=None):
+def georegister_px_df(df, im_path=None, affine_obj=None, crs=None,
+                      geom_col='geometry', precision=None, output_path=None):
     """Convert a dataframe of geometries in pixel coordinates to a geo CRS.
 
     Arguments
@@ -140,7 +140,7 @@ def georegister_px_df(df, im_fname=None, affine_obj=None, crs=None,
     df : :class:`pandas.DataFrame`
         A :class:`pandas.DataFrame` with polygons in a column named
         ``"geometry"``.
-    im_fname : str, optional
+    im_path : str, optional
         A filename or :class:`rasterio.DatasetReader` object containing an
         image that has the same bounds as the pixel coordinates in `df`. If
         not provided, `affine_obj` and `crs` must both be provided.
@@ -158,11 +158,14 @@ def georegister_px_df(df, im_fname=None, affine_obj=None, crs=None,
     precision : int, optional
         The decimal precision for output geometries. If not provided, the
         vertex locations won't be rounded.
+    output_path : str, optional
+        Path to save the resulting output to. If not provided, the object
+        won't be saved to disk.
 
     """
-    if im_fname is not None:
-        affine_obj = rasterio.open(im_fname).transform
-        crs = rasterio.open(im_fname).crs
+    if im_path is not None:
+        affine_obj = rasterio.open(im_path).transform
+        crs = rasterio.open(im_path).crs
     else:
         if not affine_obj or not crs:
             raise ValueError(
@@ -170,11 +173,19 @@ def georegister_px_df(df, im_fname=None, affine_obj=None, crs=None,
                 'affine_obj and crs must be.')
     tmp_df = affine_transform_gdf(df, affine_obj, geom_col=geom_col,
                                   precision=precision)
+    result = gpd.GeoDataFrame(tmp_df, crs=crs)
 
-    return gpd.GeoDataFrame(tmp_df, crs=crs)
+    if output_path is not None:
+        if output_path.lower().endswith('json'):
+            result.to_file(output_path, driver='GeoJSON')
+        else:
+            result.to_csv(output_path, index=False)
+
+    return result
 
 
-def geojson_to_px_gdf(geojson, im_path, precision=None):
+def geojson_to_px_gdf(geojson, im_path, geom_col='geometry', precision=None,
+                      output_path=None):
     """Convert a geojson or set of geojsons from geo coords to px coords.
 
     Arguments
@@ -190,9 +201,15 @@ def geojson_to_px_gdf(geojson, im_path, precision=None):
         transformed. This function will also accept a
         :class:`osgeo.gdal.Dataset` or :class:`rasterio.DatasetReader` with
         georeferencing information in this argument.
+    geom_col : str, optional
+        The column containing geometry in `geojson`. If not provided, defaults
+        to ``"geometry"``.
     precision : int, optional
         The decimal precision for output geometries. If not provided, the
         vertex locations won't be rounded.
+    output_path : str, optional
+        Path to save the resulting output to. If not provided, the object
+        won't be saved to disk.
 
     Returns
     -------
@@ -219,9 +236,15 @@ def geojson_to_px_gdf(geojson, im_path, precision=None):
 
     overlap_gdf = get_overlapping_subset(gdf, bbox=bbox, bbox_crs=im_crs)
     transformed_gdf = affine_transform_gdf(overlap_gdf, affine_obj=affine_obj,
-                                           inverse=True, precision=precision)
+                                           inverse=True, precision=precision,
+                                           geom_col=geom_col)
     transformed_gdf['image_fname'] = os.path.split(im_path)[1]
 
+    if output_path is not None:
+        if output_path.lower().endswith('json'):
+            transformed_gdf.to_file(output_path, driver='GeoJSON')
+        else:
+            transformed_gdf.to_csv(output_path, index=False)
     return transformed_gdf
 
 

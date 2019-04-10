@@ -14,5 +14,6 @@ dependencies:
   - rtree
   - networkx
   - rasterio
+  - tqdm
   - pip:
     - affine

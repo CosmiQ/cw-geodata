@@ -1,6 +1,9 @@
 from ..utils.core import _check_df_load, _check_rasterio_im_load
+from ..utils.core import _check_skimage_im_load
 from ..utils.geo import geometries_internal_intersection, _check_wkt_load
 import numpy as np
+from shapely.geometry import shape
+import geopandas as gpd
 import pandas as pd
 import rasterio
 from rasterio import features
@@ -9,8 +12,8 @@ from skimage.morphology import square, erosion, dilation
 
 
 def df_to_px_mask(df, channels=['footprint'], out_file=None, reference_im=None,
-                  geom_col='geometry', affine_obj=None, shape=(900, 900),
-                  out_type='int', burn_value=255, **kwargs):
+                  geom_col='geometry', do_transform=False, affine_obj=None,
+                  shape=(900, 900), out_type='int', burn_value=255, **kwargs):
     """Convert a dataframe of geometries to a pixel mask.
 
     Arguments
@@ -44,6 +47,11 @@ def df_to_px_mask(df, channels=['footprint'], out_file=None, reference_im=None,
         `affine_obj` and `shape` are ignored.
     geom_col : str, optional
         The column containing geometries in `df`. Defaults to ``"geometry"``.
+    do_transform : bool, optional
+        Should the values in `df` be transformed from geospatial coordinates
+        to pixel coordinates? Defaults to no (``False``). If ``True``, either
+        `reference_im` or `affine_obj` must be provided as a source for the
+        the required affine transformation matrix.
     affine_obj : `list` or :class:`affine.Affine`, optional
         Affine transformation to use to convert from geo coordinates to pixel
         space. Only provide this argument if `df` is a
@@ -72,12 +80,16 @@ def df_to_px_mask(df, channels=['footprint'], out_file=None, reference_im=None,
     if isinstance(channels, str):  # e.g. if "contact", not ["contact"]
         channels = [channels]
 
+    if out_file and not reference_im:
+        raise ValueError(
+            'If saving output to file, `reference_im` must be provided.')
+
     mask_dict = {}
     if 'footprint' in channels:
         mask_dict['footprint'] = footprint_mask(
             df=df, reference_im=reference_im, geom_col=geom_col,
-            affine_obj=affine_obj, shape=shape, out_type=out_type,
-            burn_value=burn_value
+            do_transform=do_transform, affine_obj=affine_obj, shape=shape,
+            out_type=out_type, burn_value=burn_value
         )
     if 'boundary' in channels:
         mask_dict['boundary'] = boundary_mask(
@@ -136,7 +148,7 @@ def footprint_mask(df, out_file=None, reference_im=None, geom_col='geometry',
         The column containing geometries in `df`. Defaults to ``"geometry"``.
     do_transform : bool, optional
         Should the values in `df` be transformed from geospatial coordinates
-        to pixel coordinates? Defaults to no (False). If True, either
+        to pixel coordinates? Defaults to no (``False``). If ``True``, either
         `reference_im` or `affine_obj` must be provided as a source for the
         the required affine transformation matrix.
     affine_obj : `list` or :class:`affine.Affine`, optional
@@ -286,8 +298,8 @@ def boundary_mask(footprint_msk=None, out_file=None, reference_im=None,
 
 
 def contact_mask(df, out_file=None, reference_im=None, geom_col='geometry',
-                 affine_obj=None, shape=(900, 900), out_type='int',
-                 contact_spacing=10, burn_value=255):
+                 do_transform=False, affine_obj=None, shape=(900, 900),
+                 out_type='int', contact_spacing=10, burn_value=255):
     """Create a pixel mask labeling closely juxtaposed objects.
 
     Notes
@@ -312,6 +324,11 @@ def contact_mask(df, out_file=None, reference_im=None, geom_col='geometry',
         `affine_obj` and `shape` are ignored.
     geom_col : str, optional
         The column containing geometries in `df`. Defaults to ``"geometry"``.
+    do_transform : bool, optional
+        Should the values in `df` be transformed from geospatial coordinates
+        to pixel coordinates? Defaults to no (``False``). If ``True``, either
+        `reference_im` or `affine_obj` must be provided as a source for the
+        the required affine transformation matrix.
     affine_obj : `list` or :class:`affine.Affine`, optional
         Affine transformation to use to convert from geo coordinates to pixel
         space. Only provide this argument if `df` is a
@@ -346,14 +363,16 @@ def contact_mask(df, out_file=None, reference_im=None, geom_col='geometry',
     df_for_footprint = pd.DataFrame({'shape_name': ['overlap'],
                                      'geometry': [intersect_poly]})
     # use `footprint_mask` to create the overlap mask
-    contact_msk = footprint_mask(df_for_footprint, reference_im=reference_im,
-                                 geom_col='geometry', affine_obj=affine_obj,
-                                 shape=shape, out_type=out_type,
-                                 burn_value=burn_value)
-    footprint_msk = footprint_mask(df, reference_im=reference_im,
-                                   geom_col=geom_col, affine_obj=affine_obj,
-                                   shape=shape, out_type=out_type,
-                                   burn_value=burn_value)
+    contact_msk = footprint_mask(
+        df_for_footprint, reference_im=reference_im, geom_col='geometry',
+        do_transform=do_transform, affine_obj=affine_obj, shape=shape,
+        out_type=out_type, burn_value=burn_value
+        )
+    footprint_msk = footprint_mask(
+        df, reference_im=reference_im, geom_col=geom_col,
+        do_transform=do_transform, affine_obj=affine_obj, shape=shape,
+        out_type=out_type, burn_value=burn_value
+        )
     contact_msk[footprint_msk > 0] = 0
     contact_msk = contact_msk > 0
     output_arr = contact_msk.astype('uint8')*burn_value
@@ -367,3 +386,83 @@ def contact_mask(df, out_file=None, reference_im=None, geom_col='geometry',
             dst.write(output_arr, indexes=1)
 
     return output_arr
+
+
+def mask_to_poly_geojson(mask_arr, reference_im=None, output_path=None,
+                         output_type='csv', min_area=40, bg_value=0,
+                         do_transform=False, simplify=False,
+                         tolerance=0.5, **kwargs):
+    """Get polygons from an image mask.
+
+    Arguments
+    ---------
+    mask_arr : :class:`numpy.ndarray` of ints
+        A 2D array of integers. Multi-channel masks are not supported, and must
+        be simplified before passing to this function. Can also pass an image
+        file path here.
+    reference_im : str, optional
+        The path to a reference geotiff to use for georeferencing the polygons
+        in the mask. Required if saving to a GeoJSON (see the ``output_type``
+        argument), otherwise only required if ``do_transform=True``.
+    output_path : str, optional
+        Path to save the output file to. If not provided, no file is saved.
+    output_type : ``'csv'`` or ``'geojson'``, optional
+        If ``output_path`` is provided, this argument defines what type of file
+        will be generated - a CSV (``output_type='csv'``) or a geojson
+        (``output_type='geojson'``).
+    min_area : int, optional
+        The minimum area of a polygon to retain. Filtering is done AFTER
+        any coordinate transformation, and therefore will be in destination
+        units.
+    bg_value : int, optional
+        The value in ``mask_arr`` that denotes background (non-object).
+        Defaults to ``0``.
+    simplify : bool, optional
+        If ``True``, will use the Douglas-Peucker algorithm to simplify edges,
+        saving memory and processing time later. Defaults to ``False``.
+    tolerance : float, optional
+        The tolerance value to use for simplification with the Douglas-Peucker
+        algorithm. Defaults to 0.5. Only has an effect if ``simplify=True``.
+
+    Returns
+    -------
+    gdf : :class:`geopandas.GeoDataFrame`
+        A GeoDataFrame of polygons.
+
+    """
+    mask_arr = _check_skimage_im_load(mask_arr)
+    if do_transform and reference_im is None:
+        raise ValueError(
+            'Coordinate transformation requires a reference image.')
+
+    if do_transform:
+        with rasterio.open(reference_im) as ref:
+            transform = ref.transform
+            crs = ref.crs
+            ref.close()
+    else:
+        transform = Affine(1, 0, 0, 0, 1, 0)  # identity transform
+        crs = None
+
+    mask = mask_arr != bg_value
+    mask = mask.astype('uint8')
+
+    polygon_generator = features.shapes(mask_arr,
+                                        transform=transform,
+                                        mask=mask)
+    polygons = []
+    values = []  # pixel values for the polygon in mask_arr
+    for polygon, value in polygon_generator:
+        p = shape(polygon).buffer(0.0)
+        if p.area >= min_area:
+            polygons.append(shape(polygon).buffer(0.0))
+            values.append(value)
+
+    polygon_gdf = gpd.GeoDataFrame({'geometry': polygons, 'value': values},
+                                   crs=crs)
+    if simplify:
+        polygon_gdf['geometry'] = polygon_gdf['geometry'].apply(
+            lambda x: x.simplify(tolerance=tolerance)
+            )
+
+    return polygon_gdf

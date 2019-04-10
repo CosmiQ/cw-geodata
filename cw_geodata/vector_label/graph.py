@@ -1,12 +1,12 @@
-from __future__ import print_function, division, absolute_import
+import os
 import numpy as np
 import geopandas as gpd
 from ..utils.geo import get_subgraph
 import shapely
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString
 import networkx as nx
-import geopandas as gpd
 import fiona
+import pickle
 from multiprocessing import Pool
 
 
@@ -141,7 +141,7 @@ class Path(object):
 def geojson_to_graph(geojson, graph_name=None, retain_all=True,
                      valid_road_types=None, road_type_field='type', edge_idx=0,
                      first_node_idx=0, weight_norm_field=None, inverse=False,
-                     workers=1, verbose=False):
+                     workers=1, verbose=False, output_path=None):
     """Convert a geojson of path strings to a network graph.
 
     Arguments
@@ -188,6 +188,9 @@ def geojson_to_graph(geojson, graph_name=None, retain_all=True,
         Should not be greater than the number of CPUs available.
     verbose : bool, optional
         Verbose print output. Defaults to ``False`` .
+    output_path : str, optional
+        Path to a pickle file to save the output graph to. Nothing will be
+        saved to disk if not provided.
 
     Returns
     -------
@@ -198,6 +201,9 @@ def geojson_to_graph(geojson, graph_name=None, retain_all=True,
         geographic distance.
 
     """
+    with fiona.open(geojson, 'r') as f:
+        crs = f.crs
+        f.close()
     # due to an annoying feature of loading these graphs, the numeric road
     # type identifiers are presented as string versions. we therefore reformat
     # the valid_road_types list as strings.
@@ -218,7 +224,7 @@ def geojson_to_graph(geojson, graph_name=None, retain_all=True,
     # each path dict has a list of node_idxs as well as properties metadata.
 
     # initialize the graph object
-    G = nx.MultiDiGraph(name=graph_name, crs={'init': 'epsg:4326'})
+    G = nx.MultiDiGraph(name=graph_name, crs=crs)
     if not nodes:  # if there are no nodes in the graph
         return G
     if verbose:
@@ -226,12 +232,13 @@ def geojson_to_graph(geojson, graph_name=None, retain_all=True,
         print("paths:", paths)
     # add each osm node to the graph
     for node in nodes:
-        G.add_node(node, **{'x': node.x, 'y': node.y})
+        G.add_node(node.idx, **{'x': node.x, 'y': node.y})
     # add each path to the graph
     for path in paths:
         # calculate edge length using euclidean distance and a weighting term
         path.set_edge_weights(data_key=weight_norm_field, inverse=inverse)
-        edges = [(*edge.nodes, edge.weight) for edge in path]
+        edges = [(*[node.idx for node in edge.nodes],
+                  edge.weight) for edge in path]
         if verbose:
             print(edges)
         G.add_weighted_edges_from(edges)
@@ -240,6 +247,11 @@ def geojson_to_graph(geojson, graph_name=None, retain_all=True,
         # code modified from osmnx.core.get_largest_component & induce_subgraph
         largest_cc = max(nx.weakly_connected_components(G), key=len)
         G = get_subgraph(G, largest_cc)
+
+    if output_path:
+        with open(output_path, 'wb') as f:
+            pickle.dump(G, f)
+            f.close()
 
     return G
 
@@ -435,6 +447,84 @@ def linestring_to_edges(linestring, node_gdf):
             edges.append(nodes[-2:])
 
     return edges
+
+
+def graph_to_geojson(G, output_path, encoding='utf-8', overwrite=False):
+    """
+    Save graph to two geojsons: one containing nodes, the other edges.
+
+    Arguments
+    ---------
+    G : :class:`networkx.MultiDiGraph`
+        A graph object to save to geojson files.
+    output_path : str
+        Path to save the geojsons to. ``'_nodes.geojson'`` and
+        ``'_edges.geojson'`` will be appended to ``output_path`` (after
+        stripping the extension).
+    encoding : str, optional
+        The character encoding for the saved files.
+    overwrite : bool, optional
+        Should files at ``output_path`` be overwritten? Defaults to no
+        (``False``).
+
+    Notes
+    -----
+    This function is based on ``osmnx.save_load.save_graph_shapefile``, with
+    tweaks to make it work with our graph objects. It will save two geojsons:
+    a file containing all of the nodes and a file containing all of the edges.
+
+    Returns
+    -------
+    None
+
+    """
+    # convert directed graph G to an undirected graph for saving as a shapefile
+    G_to_save = G.copy().to_undirected()
+    # create GeoDataFrame containing all of the nodes
+    gdf_nodes = gpd.GeoDataFrame(
+        {node: data for node, data in G_to_save.nodes(data=True)}
+        )
+
+    gdf_nodes.crs = G_to_save.graph['crs']
+    gdf_nodes['geometry'] = gdf_nodes.apply(
+        lambda row: Point(row['x'], row['y']), axis=1
+        )
+    gdf_nodes = gdf_nodes.drop(columns=['x', 'y'])
+    gdf_nodes['node_idx'] = gdf_nodes['node_idx'].astype(np.int32)
+
+    # create GeoDataFrame containing all of the edges
+    edges = []
+    for u, v, key, data in G_to_save.edges(keys=True, data=True):
+        edge = {'key': key}
+        for attr_key in data:
+            edge[attr_key] = data[attr_key]
+        if 'geometry' not in data:
+            point_u = Point((G_to_save.nodes[u]['x'], G_to_save.nodes[u]['y']))
+            point_v = Point((G_to_save.nodes[v]['x'], G_to_save.nodes[v]['y']))
+            edge['geometry'] = LineString([point_u, point_v])
+        edges.append(edge)
+
+    gdf_edges = gpd.GeoDataFrame(edges)
+    gdf_edges.crs = G_to_save.graph['crs']
+
+    for col in [c for c in gdf_nodes.columns if c != 'geometry']:
+        gdf_nodes[col] = gdf_nodes[col].fillna('').apply(str)
+    for col in [c for c in gdf_edges.columns if c != 'geometry']:
+        gdf_edges[col] = gdf_edges[col].fillna('').apply(str)
+
+    # make directory structure
+    if not os.path.exists(os.path.split(output_path)[0]):
+        os.makedirs(os.path.split(output_path)[0])
+
+    edges_path = os.path.splitext(output_path)[0] + '_edges.geojson'
+    nodes_path = os.path.splitext(output_path)[0] + '_nodes.geojson'
+    if overwrite:
+        if os.path.exists(edges_path):
+            os.remove(edges_path)
+        if os.path.exists(nodes_path):
+            os.remove(nodes_path)
+    gdf_edges.to_file(edges_path, encoding=encoding, driver='GeoJSON')
+    gdf_nodes.to_file(nodes_path, encoding=encoding, driver='GeoJSON')
 
 
 def _get_all_nodes(feature):
