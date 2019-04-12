@@ -196,9 +196,7 @@ def geojson_to_px_gdf(geojson, im_path, geom_col='geometry', precision=None,
         column named ``'geometry'`` in this argument.
     im_path : str
         Path to a georeferenced image (ie a GeoTIFF) that geolocates to the
-        same geography as the `geojson`(s). If a directory, the bounds of each
-        GeoTIFF will be loaded in and all overlapping geometries will be
-        transformed. This function will also accept a
+        same geography as the `geojson`(s). This function will also accept a
         :class:`osgeo.gdal.Dataset` or :class:`rasterio.DatasetReader` with
         georeferencing information in this argument.
     geom_col : str, optional
