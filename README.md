@@ -34,8 +34,8 @@ cd cw-geodata
 ```
 Next, create a [conda](https://anaconda.com/distribution/) environment with dependencies installed as defined in the environment.yml file.
 ```
-conda create env -n cw-geodata -f environment.yml
-conda activate cw-geodata
+conda env create -f environment.yml
+source activate cw-geodata
 ```
 Finally, use `pip` to install this package.
 ```
